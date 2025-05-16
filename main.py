@@ -1,18 +1,27 @@
 import os
 from typing import Dict, List, Optional, Any
 from dotenv import load_dotenv
-import argparse
+import argparse  # Add argparse for command-line interface
 
 # Load environment variables from .env file
 load_dotenv()
 
 # LangChain imports
 from langchain_core.documents import Document
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_chroma import Chroma
+
+# LangGraph imports
+from langgraph.graph import StateGraph, END
 
 # Import our components from backend modules
 from backend.core.knowledge_base import SecurityKnowledgeBase
 from backend.core.orchestrator import SecurityAgentOrchestrator
 from backend.utils.cve_loader import CVEDataLoader
+from backend.utils.vulnerability_scanner import VulnerabilityScanner
 
 # Setup basic directory structures
 CHROMA_DIR = os.environ.get("CHROMA_PERSIST_DIRECTORY", os.path.join(os.path.dirname(__file__), "data", "chroma"))
@@ -99,6 +108,48 @@ def load_cve_data(kb: SecurityKnowledgeBase, cve_id: str = None, keyword: str = 
     else:
         print("No CVE documents were loaded")
 
+# New function to scan URLs and generate reports
+def scan_url_for_vulnerabilities(kb: SecurityKnowledgeBase, url: str, add_to_kb: bool = False) -> Dict:
+    """
+    Scan a URL for security vulnerabilities and generate a CVE-style report
+    
+    Args:
+        kb: SecurityKnowledgeBase instance
+        url: URL to scan for vulnerabilities
+        add_to_kb: Whether to add the scan report to the knowledge base
+        
+    Returns:
+        The generated vulnerability report
+    """
+    print(f"\n--- Scanning URL for Vulnerabilities: {url} ---")
+    
+    # Initialize the vulnerability scanner
+    scanner = VulnerabilityScanner()
+    
+    # Scan the URL
+    scan_result = scanner.scan_url(url)
+    print(f"Scan complete. Found {len(scan_result.get('vulnerabilities', []))} potential vulnerabilities.")
+    
+    # Generate a CVE-style report
+    report = scanner.create_cve_style_report(scan_result)
+    
+    # Print a summary of the report
+    print(f"\nVulnerability Report: {report['id']}")
+    print(f"URL: {report['url']}")
+    print(f"Severity: {report['severity']}")
+    print(f"Summary: {report['summary']}")
+    print("\nDescription:")
+    print(report['description'])
+    
+    # Add the report to the knowledge base if requested
+    if add_to_kb:
+        documents = scanner.convert_to_documents(report)
+        if documents:
+            kb.add_documents(documents)
+            print(f"\nAdded vulnerability report for {url} to the knowledge base.")
+    
+    return report
+
 
 if __name__ == "__main__":
     # Set up argument parser for command-line interface
@@ -118,6 +169,12 @@ if __name__ == "__main__":
     cve_parser.add_argument("--keyword", help="Keyword to search for CVEs")
     cve_parser.add_argument("--max-results", type=int, default=20, help="Maximum search results")
     cve_parser.add_argument("--smart-contracts", action="store_true", help="Load smart contract CVEs")
+    
+    # Vulnerability scanner
+    scan_parser = subparsers.add_parser("scan", help="Scan a URL for vulnerabilities and generate a report")
+    scan_parser.add_argument("url", help="URL to scan (GitHub repo, Etherscan contract, or raw file URL)")
+    scan_parser.add_argument("--add-to-kb", action="store_true", help="Add the report to the knowledge base")
+    scan_parser.add_argument("--output", help="File path to save the report as JSON")
     
     # Parse arguments
     args = parser.parse_args()
@@ -173,6 +230,17 @@ if __name__ == "__main__":
         
         print("\nCVE data loaded into knowledge base successfully.")
         print("You can now run the agent with: python main.py run <url>")
+    
+    elif args.operation == "scan":
+        # Run the vulnerability scanner on the provided URL
+        report = scan_url_for_vulnerabilities(kb, args.url, add_to_kb=args.add_to_kb)
+        
+        # Save the report to a file if requested
+        if args.output:
+            import json
+            with open(args.output, 'w') as f:
+                json.dump(report, f, indent=2)
+            print(f"\nSaved vulnerability report to {args.output}")
     
     else:
         # No operation specified, show help
