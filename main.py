@@ -581,7 +581,7 @@ if __name__ == "__main__":
                 vuln_table.add_column("Type", style="yellow")
                 vuln_table.add_column("Description", style="cyan")
                 
-            for vuln in result.get('vulnerabilities', []):
+                for vuln in result.get('vulnerabilities', []):
                     vuln_table.add_row(vuln['type'], vuln['description'])
                 
                 console.print(vuln_table)
